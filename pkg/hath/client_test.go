@@ -63,13 +63,22 @@ func TestClient_FetchRemoteSettings(t *testing.T) {
 	t.Logf("%#v", resp)
 }
 
-func TestClient_GetCertificate(t *testing.T) {
+func TestClient_GetRawPKCS12(t *testing.T) {
 	c := testClient()
 
-	resp, err := c.GetCertificate()
+	resp, err := c.GetRawPKCS12()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	afero.WriteFile(afero.NewBasePathFs(afero.NewOsFs(), "."), "hathcert.p12", resp.([]byte), 7777)
+	afero.WriteFile(afero.NewBasePathFs(afero.NewOsFs(), "."), "hathcert.p12", resp, 7777)
+}
+
+func TestClient_GetCertificate(t *testing.T) {
+	c := testClient()
+
+	_, err := c.GetCertificate()
+	if err != nil {
+		panic(err)
+	}
 }

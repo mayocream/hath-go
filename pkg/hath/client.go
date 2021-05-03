@@ -1,7 +1,9 @@
+// Package hath client/server side impl
 package hath
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -16,7 +18,6 @@ import (
 	"time"
 
 	"github.com/cloudflare/cfssl/helpers"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
@@ -26,7 +27,7 @@ import (
 	"github.com/mayocream/hath-go/pkg/wrr"
 )
 
-// Settings ...
+// Settings stands for client side config.
 type Settings struct {
 	ClientID  int    `yaml:"clien-id" mapstructure:"clien-id"`
 	ClientKey string `yaml:"client-key" mapstructure:"client-key"`
@@ -34,30 +35,34 @@ type Settings struct {
 	RemoteSettings
 }
 
-// RemoteSettings ...
+// RemoteSettings config from remote server, overwrite local config.
 type RemoteSettings struct {
 	ServerPort int `yaml:"server-port" mapstructure:"server-port"`
 }
 
-// RPCServers ...
+// RPCServers multi-server for rpc call, using weighted round-robin aglo
+//	to load balancing.
 type RPCServers struct {
 	sync.RWMutex
 
-	Hosts    []string
+	Hosts    map[string]int
 	Balancer wrr.WRR
 }
 
-// RPCResponse ...
+// RPCResponse general hath response from server
 type RPCResponse struct {
 	Status  RPCStatus  `json:"status"`
 	Payload RPCPayload `json:"payload"`
 	Host    string     `json:"host"`
 }
 
-// RPCPayload payload data
+// RPCPayload rpc payload data.
+//	There might be 2 forms of respopnse,
+//	1. key and value pairs
+//	2. line data
 type RPCPayload []string
 
-// KeyValues kv for settings
+// KeyValues kvs for settings.
 func (p RPCPayload) KeyValues() map[string]string {
 	kv := make(map[string]string, len(p))
 	for _, s := range p {
@@ -69,7 +74,7 @@ func (p RPCPayload) KeyValues() map[string]string {
 	return kv
 }
 
-// URLs ...
+// URLs each line contains one url
 func (p RPCPayload) URLs() []*url.URL {
 	ul := make([]*url.URL, 0, len(p))
 	for _, s := range p {
@@ -81,7 +86,7 @@ func (p RPCPayload) URLs() []*url.URL {
 	return ul
 }
 
-// Client connect to hath server
+// Client connects to hath server.
 type Client struct {
 	Settings
 
@@ -92,7 +97,7 @@ type Client struct {
 	serverTimeDelta int64
 }
 
-// NewClient ...
+// NewClient creates new client.
 func NewClient(config Settings) (*Client, error) {
 	if config.ClientID == 0 || config.ClientKey == "" {
 		return nil, errors.New("id/key missing")
@@ -122,11 +127,14 @@ func NewClient(config Settings) (*Client, error) {
 }
 
 var (
-	ErrRespIsNull             = errors.New("obb response")
+	// ErrRespIsNull server error
+	ErrRespIsNull = errors.New("obb response")
+	// ErrTemporarilyUnavailable another server error
 	ErrTemporarilyUnavailable = errors.New("temporarily unavailable")
 )
 
 // RPCRawRequest will retry 3 times when failed, then downgrade rpc severs
+//	TODO improve load balancer for less RTT
 func (c *Client) RPCRawRequest(uri *url.URL) (*RPCResponse, error) {
 	resp, err := c.http.R().Get(uri.String())
 	if err != nil {
@@ -178,11 +186,12 @@ func (c *Client) RPCRawRequest(uri *url.URL) (*RPCResponse, error) {
 	return nil, fmt.Errorf("unknown: %s", status)
 }
 
+// correctedTime server might need UTC time
 func (c *Client) correctedTime() int {
 	return util.SystemTime() + int(atomic.LoadInt64(&c.serverTimeDelta))
 }
 
-// GetRPCURL ...
+// GetRPCURL url query string holds params.
 func (c *Client) GetRPCURL(act Action, add string) *url.URL {
 	u := &url.URL{
 		Scheme: ClientRPCProtocol,
@@ -201,7 +210,7 @@ func (c *Client) GetRPCURL(act Action, add string) *url.URL {
 	return u
 }
 
-// RPCRequest ...
+// RPCRequest general rpc call.
 func (c *Client) RPCRequest(act Action, add string) (*RPCResponse, error) {
 	return c.RPCRawRequest(c.GetRPCURL(act, add))
 }
@@ -220,7 +229,7 @@ func (c *Client) getURLQuery(act Action, add string) url.Values {
 	return q
 }
 
-// GetRPCHost ...
+// GetRPCHost wrr load balancer
 func (c *Client) GetRPCHost() string {
 	defer c.RPCServers.RUnlock()
 	c.RPCServers.RLock()
@@ -232,7 +241,7 @@ func (c *Client) GetRPCHost() string {
 	return ClientRPCHost
 }
 
-// SyncTimeDelta ...
+// SyncTimeDelta sync clock with hath server
 func (c *Client) SyncTimeDelta() error {
 	resp, err := c.RPCRequest(ActionServerStat, "")
 	if err != nil {
@@ -256,7 +265,7 @@ func (c *Client) SyncTimeDelta() error {
 	return nil
 }
 
-// FetchRemoteSettings fetch settings from h@h
+// FetchRemoteSettings fetch client settings from h@h, priority more than local config
 func (c *Client) FetchRemoteSettings() (*RPCResponse, error) {
 	resp, err := c.RPCRequest(ActionClientLogin, "")
 	if err != nil {
@@ -265,11 +274,11 @@ func (c *Client) FetchRemoteSettings() (*RPCResponse, error) {
 
 	if srvListStr, ok := resp.Payload.KeyValues()["rpc_server_ip"]; ok {
 		srvList := strings.Split(srvListStr, ";")
-		hosts := make([]string, 0, len(srvList))
+		hosts := make(map[string]int, len(srvList))
 		balancer := wrr.NewEDF()
 		for _, srv := range srvList {
 			if srvIP := net.ParseIP(srv); srvIP != nil {
-				hosts = append(hosts, srvIP.String())
+				hosts[srvIP.String()] = 10
 				balancer.Add(srvIP.String(), 10)
 			}
 		}
@@ -283,7 +292,8 @@ func (c *Client) FetchRemoteSettings() (*RPCResponse, error) {
 	return resp, nil
 }
 
-// GetRawPKCS12 ...
+// GetRawPKCS12 raw pkck12 file from hath server, including 2 certs and 1 priv key,
+//	2 certs for workload cert and intermediate cert. We need adition setps to handle.
 func (c *Client) GetRawPKCS12() ([]byte, error) {
 	certURL := c.GetRPCURL(ActionGetCertificate, "")
 	resp, err := c.http.R().Get(certURL.String())
@@ -303,26 +313,53 @@ func (c *Client) GetCertificate() (*tls.Certificate, error) {
 		return nil, err
 	}
 
-	// we should using pkcs12 topem method to remove unsupported tags
-	// clientkey is used to decode
+	// We should using pkcs12 topem method to remove unsupported tags
+	// 	clientkey is used to decode.
+	// ref: https://github.com/golang/go/issues/23499#issuecomment-367849407
+	// It's a workaround for golang pkcs12 package is only for a single file
+	// 	contains only one key and one certificate.
 	pemBlocks, err := pkcs12.ToPEM(pk, c.ClientKey)
 	if err != nil {
 		return nil, errors.Wrap(err, "pkcs12 decode")
 	}
 
+	var leafCert, intermediateCert *x509.Certificate
+	var privkey []byte
+
 	for _, block := range pemBlocks {
 		p := pem.EncodeToMemory(block)
 
 		if block.Type == "CERTIFICATE" {
-			if _, err := helpers.ParseCertificatePEM(p); err != nil {
+			cert, err := helpers.ParseCertificatePEM(p)
+			if err != nil {
 				return nil, errors.Wrap(err, "parse cert")
 			}
+			// TODO support multi intermediate certs
+			if cert.IsCA {
+				intermediateCert = cert
+			} else {
+				leafCert = cert
+			}
 		} else if block.Type == "PRIVATE KEY" {
-			if _, err := helpers.ParsePrivateKeyPEMWithPassword(p, []byte(c.ClientKey)); err != nil {
+			key, err := helpers.ParsePrivateKeyPEMWithPassword(p, []byte(c.ClientKey))
+			if err != nil {
 				return nil, errors.Wrap(err, "parse key")
 			}
+			priv, err := x509.MarshalPKCS8PrivateKey(key)
+			if err != nil {
+				return nil, errors.Wrap(err, "marshal key")
+			}
+			privkey = pem.EncodeToMemory(&pem.Block{
+				Type:  "PRIVATE KEY",
+				Bytes: priv,
+			})
 		}
 	}
 
-	return nil, nil
+	tlsCert, err := tls.X509KeyPair(helpers.EncodeCertificatesPEM([]*x509.Certificate{leafCert, intermediateCert}), privkey)
+	if err != nil {
+		return nil, errors.Wrap(err, "tls cert")
+	}
+
+	return &tlsCert, nil
 }
