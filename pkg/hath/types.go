@@ -1,7 +1,7 @@
 package hath
 
 const (
-	ClientVersion = "1.6.1"
+	ClientVersion = "1.6.1#go"
 	// ClientBuild is among other things used by the server to determine the client's capabilities. any forks should use the build number as an indication of compatibility with mainline, rather than an internal build number.
 	ClientBuild       = 154
 	ClientKeyLength   = 20
