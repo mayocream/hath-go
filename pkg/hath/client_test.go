@@ -56,7 +56,7 @@ func TestClient_RPCRawRequest(t *testing.T) {
 func TestClient_FetchRemoteSettings(t *testing.T) {
 	c := testClient()
 
-	resp, err := c.FetchRemoteSettings()
+	resp, err := c.FetchRemoteSettings(false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,12 +31,13 @@ import (
 type Settings struct {
 	ClientID  int    `yaml:"clien-id" mapstructure:"clien-id"`
 	ClientKey string `yaml:"client-key" mapstructure:"client-key"`
-
-	RemoteSettings
 }
 
 // RemoteSettings config from remote server, overwrite local config.
+//	it can be modified from server side, so it can be hot reload.
 type RemoteSettings struct {
+	sync.RWMutex
+
 	ServerPort int `yaml:"server-port" mapstructure:"server-port"`
 }
 
@@ -89,6 +90,7 @@ func (p RPCPayload) URLs() []*url.URL {
 // Client connects to hath server.
 type Client struct {
 	Settings
+	RemoteSettings RemoteSettings
 
 	RPCServers RPCServers
 
@@ -122,7 +124,7 @@ func NewClient(config Settings) (*Client, error) {
 	}
 	// Init
 	c.SyncTimeDelta()
-	c.FetchRemoteSettings()
+	c.FetchRemoteSettings(false) // not running
 	return c, nil
 }
 
@@ -173,7 +175,7 @@ func (c *Client) RPCRawRequest(uri *url.URL) (*RPCResponse, error) {
 		if err := c.SyncTimeDelta(); err != nil {
 			return nil, errors.Wrap(err, "key expired, retry failed")
 		}
-		if _, err := c.FetchRemoteSettings(); err != nil {
+		if _, err := c.FetchRemoteSettings(true); err != nil {
 			return nil, errors.Wrap(err, "key expired, retry failed")
 		}
 		return c.RPCRawRequest(uri)
@@ -266,8 +268,14 @@ func (c *Client) SyncTimeDelta() error {
 }
 
 // FetchRemoteSettings fetch client settings from h@h, priority more than local config
-func (c *Client) FetchRemoteSettings() (*RPCResponse, error) {
-	resp, err := c.RPCRequest(ActionClientLogin, "")
+func (c *Client) FetchRemoteSettings(isRunning bool) (*RPCResponse, error) {
+	// action can be different from server side logic,
+	//	though it returns same response.
+	act := ActionClientLogin
+	if isRunning {
+		act = ActionClientSettings
+	}
+	resp, err := c.RPCRequest(act, "")
 	if err != nil {
 		return nil, err
 	}

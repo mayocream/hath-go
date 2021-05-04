@@ -3,8 +3,13 @@ package hath
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mayocream/hath-go/pkg/hath/util"
@@ -12,9 +17,14 @@ import (
 	"go.uber.org/zap"
 )
 
+func init() {
+	rand.Seed(time.Now().Unix())
+}
+
 // Server p2p server
 type Server struct {
 	hc     *Client
+	dl     *Downloader
 	logger *zap.SugaredLogger
 }
 
@@ -81,15 +91,21 @@ func (s *Server) HandleHathCmd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) execAPICmd(w http.ResponseWriter, cmd string, add string) error {
+	addParams := util.ParseAddition(add)
 	// although we use iso-8859-1 encoding, generaly we don't use unicode strings,
 	//	it's fine just print utf8 encoding.
 	w.Header().Set("Content-Type:", "text/html; charset=ISO-8859-1")
 
 	switch cmd {
-		// health check
+	// health check
 	case "still_alive":
 		w.Write([]byte("I feel FANTASTIC and I'm still alive"))
 	case "threaded_proxy_test":
+		result, err := s.execDownloadTest(addParams)
+		if err != nil {
+			return err
+		}
+		w.Write(result)
 	case "speed_test":
 	case "refresh_settings":
 	case "start_downloader":
@@ -100,4 +116,45 @@ func (s *Server) execAPICmd(w http.ResponseWriter, cmd string, add string) error
 	}
 
 	return nil
+}
+
+func (s *Server) execDownloadTest(add map[string]string) ([]byte, error) {
+	host := add["hostname"] + ":" + add["port"]
+	protocol := add["protocol"]
+	// default scheme
+	if protocol == "" {
+		protocol = "http"
+	}
+	testSize := cast.ToInt(add["testsize"])
+	testCount := cast.ToInt(add["testcount"])
+	testTime := cast.ToInt(add["testtime"])
+	testKey := add["testkey"]
+
+	var totalTimeMs int64
+	totalSuccess := int64(testCount)
+
+	wg := new(sync.WaitGroup)
+	for i := 0; i < testCount; i++ {
+		fileURL := &url.URL{
+			Scheme: protocol,
+			Host:   host,
+			Path:   fmt.Sprintf("/t/%v/%v/%s/%v", testSize, testTime, testKey, rand.Int()),
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			duration, err := s.dl.DiscardDownload(fileURL.String())
+			if err != nil {
+				atomic.AddInt64(&totalSuccess, -1)
+				return
+			}
+			atomic.AddInt64(&totalTimeMs, duration.Milliseconds())
+		}()
+	}
+
+	wg.Wait()
+
+	result := fmt.Sprintf("OK:%v-%v", totalSuccess, totalTimeMs)
+
+	return []byte(result), nil
 }
