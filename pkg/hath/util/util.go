@@ -3,6 +3,7 @@ package util
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -36,4 +37,12 @@ func ParseAddition(add string) map[string]string {
 	}
 
 	return kvs
+}
+
+
+var hvFileIDRegex = regexp.MustCompile("^[a-f0-9]{40}-[0-9]{1,8}-[0-9]{1,5}-[0-9]{1,5}-((jpg)|(png)|(gif)|(wbm))$")
+
+// ValidHVFileID ...
+func ValidHVFileID(fileID string) bool {
+	return hvFileIDRegex.MatchString(fileID)
 }

@@ -74,10 +74,10 @@ func TestClient_GetRawPKCS12(t *testing.T) {
 	afero.WriteFile(afero.NewBasePathFs(afero.NewOsFs(), "."), "hathcert.p12", resp, 7777)
 }
 
-func TestClient_GetCertificate(t *testing.T) {
+func TestClient_GetTLSCertificate(t *testing.T) {
 	c := testClient()
 
-	_, err := c.GetCertificate()
+	_, err := c.GetTLSCertificate()
 	if err != nil {
 		panic(err)
 	}

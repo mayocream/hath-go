@@ -57,6 +57,32 @@ type RPCResponse struct {
 	Host    string     `json:"host"`
 }
 
+// Certificate tls cert for multi-goroutine
+type Certificate struct {
+	*tls.Certificate
+
+	mu sync.RWMutex
+}
+
+// StoreCertificate store cert
+func (c *Certificate) StoreCertificate(cert *tls.Certificate) {
+	defer c.mu.Unlock()
+	c.mu.Lock()
+
+	c.Certificate = cert
+}
+
+// GetCertificate get cert
+func (c *Certificate) GetCertificate() (*tls.Certificate, error) {
+	defer c.mu.RUnlock()
+	c.mu.RLock()
+	if c.Certificate == nil {
+		return nil, errors.New("cert not available")
+	}
+
+	return c.Certificate, nil
+}
+
 // RPCPayload rpc payload data.
 //	There might be 2 forms of respopnse,
 //	1. key and value pairs
@@ -97,6 +123,7 @@ type Client struct {
 	http *resty.Client
 
 	serverTimeDelta int64
+	Certificate     *Certificate
 }
 
 // NewClient creates new client.
@@ -121,6 +148,7 @@ func NewClient(config Settings) (*Client, error) {
 			SetHeader("User-Agent", "Hentai@Home "+ClientVersion).
 			SetRetryCount(3).
 			SetDebug(cast.ToBool(os.Getenv("HATH_HTTP_DEBUG"))),
+		Certificate: new(Certificate),
 	}
 	// Init
 	c.SyncTimeDelta()
@@ -312,10 +340,10 @@ func (c *Client) GetRawPKCS12() ([]byte, error) {
 	return resp.Body(), nil
 }
 
-// GetCertificate the server returns pkcs12 package,
+// GetTLSCertificate the server returns pkcs12 package,
 //	to server contents from HTTPS we need tls.Certificate
 //	to provide digital encrypt and verification.
-func (c *Client) GetCertificate() (*tls.Certificate, error) {
+func (c *Client) GetTLSCertificate() (*tls.Certificate, error) {
 	pk, err := c.GetRawPKCS12()
 	if err != nil {
 		return nil, err

@@ -1,7 +1,6 @@
 package hath
 
 import (
-	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/gorilla/mux"
 	"github.com/mayocream/hath-go/pkg/hath/util"
@@ -49,10 +50,25 @@ func (s *Server) ParseRPCRequest(req *http.Request) (interface{}, error) {
 
 // HandleHV ...
 //	form: /h/$fileid/$additional/$filename
-func (s *Server) HandleHV(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleHV(fileID string, addStr string, fileName string) (interface{}, error) {
+	add := util.ParseAddition(addStr)
+	hvFile, err := NewHVFileFromFileID(fileID)
+	if err != nil {
+		s.logger.With("fileID", fileID).Warnf("HVFile, %s", err)
+		return nil, err
+	}
+
+	
+}
+
+// HandleTest ...
+// 	form: /t/$testsize/$testtime/$testkey
+func (s *Server) HandleTest(testSize, testTime int, testKey string) {
+	// TODO return random bytes
 }
 
 // HandleHathCmd ...
+// TODO translate into general struct, to support Fiber web framework.
 //	form: /servercmd/$command/$additional/$time/$key
 func (s *Server) HandleHathCmd(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -62,7 +78,7 @@ func (s *Server) HandleHathCmd(w http.ResponseWriter, r *http.Request) {
 	key := vars["key"]
 
 	// only allow API Server rquests
-	ip := net.ParseIP(r.RemoteAddr)
+	ip := net.ParseIP(r.RemoteAddr) 
 
 	s.logger.With("params", vars, "ip", ip).Info("ServerCmd, received event.")
 
@@ -107,9 +123,17 @@ func (s *Server) execAPICmd(w http.ResponseWriter, cmd string, add string) error
 		}
 		w.Write(result)
 	case "speed_test":
+		// TODO return random bytes
 	case "refresh_settings":
+		s.hc.FetchRemoteSettings(true)
 	case "start_downloader":
+		// ignore it, we will init Download at started.
 	case "refresh_certs":
+		tlsCert, err := s.hc.GetTLSCertificate()
+		if err != nil {
+			return err
+		}
+		s.hc.Certificate.StoreCertificate(tlsCert)
 	default:
 		w.Write([]byte("INVALID_COMMAND"))
 		return errors.New("invalid command")
