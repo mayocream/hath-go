@@ -2,10 +2,12 @@ package hath
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +29,7 @@ type Server struct {
 	hc     *Client
 	dl     *Downloader
 	logger *zap.SugaredLogger
+	stor   *Storage
 }
 
 // NewServer ...
@@ -50,7 +53,7 @@ func (s *Server) ParseRPCRequest(req *http.Request) (interface{}, error) {
 
 // HandleHV ...
 //	form: /h/$fileid/$additional/$filename
-func (s *Server) HandleHV(fileID string, addStr string, fileName string) (interface{}, error) {
+func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFile, error) {
 	add := util.ParseAddition(addStr)
 	hvFile, err := NewHVFileFromFileID(fileID)
 	if err != nil {
@@ -58,7 +61,37 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (interf
 		return nil, err
 	}
 
-	
+	keystampRejected := true
+	if keystamp, ok := add["keystamp"]; ok {
+		parts := strings.Split(keystamp, "-")
+		if len(parts) == 2 {
+			keystampTime := cast.ToInt(parts[0])
+			k := util.SHA1(fmt.Sprintf("%s-%s-%s-hotlinkthis", cast.ToString(keystampTime), fileID, s.hc.ClientKey))
+			if math.Abs(float64(util.SystemTime()-keystampTime)) < 900 && strings.ToLower(parts[1]) == k[:10] {
+				keystampRejected = false
+			}
+		}
+	}
+
+	fileIndex := cast.ToInt(add["fileindex"])
+	xres := add["xres"]
+
+	if keystampRejected {
+		return nil, NewHTTPErr(http.StatusForbidden, errors.New("keystamp rejected"))
+	}
+
+	if fileIndex == 0 || xres == "" {
+		return nil, NewHTTPErr(http.StatusNotFound, errors.New("Invalid or missing arguments"))
+	}
+
+	hv, err := s.stor.GetHVFile(hvFile)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
+		}
+		// TODO proxy download
+	}
+	return hv, nil
 }
 
 // HandleTest ...
@@ -78,7 +111,7 @@ func (s *Server) HandleHathCmd(w http.ResponseWriter, r *http.Request) {
 	key := vars["key"]
 
 	// only allow API Server rquests
-	ip := net.ParseIP(r.RemoteAddr) 
+	ip := net.ParseIP(r.RemoteAddr)
 
 	s.logger.With("params", vars, "ip", ip).Info("ServerCmd, received event.")
 

@@ -38,7 +38,10 @@ type Settings struct {
 type RemoteSettings struct {
 	sync.RWMutex
 
-	ServerPort int `yaml:"server-port" mapstructure:"server-port"`
+	ServerPort   int `yaml:"server-port" mapstructure:"server-port"`
+	StaticRanges map[string]int
+
+	RawSettings map[string]string
 }
 
 // RPCServers multi-server for rpc call, using weighted round-robin aglo
@@ -308,7 +311,9 @@ func (c *Client) FetchRemoteSettings(isRunning bool) (*RPCResponse, error) {
 		return nil, err
 	}
 
-	if srvListStr, ok := resp.Payload.KeyValues()["rpc_server_ip"]; ok {
+	payloadKvs := resp.Payload.KeyValues()
+
+	if srvListStr, ok := payloadKvs["rpc_server_ip"]; ok {
 		srvList := strings.Split(srvListStr, ";")
 		hosts := make(map[string]int, len(srvList))
 		balancer := wrr.NewEDF()
@@ -323,6 +328,22 @@ func (c *Client) FetchRemoteSettings(isRunning bool) (*RPCResponse, error) {
 
 		c.RPCServers.Hosts = hosts
 		c.RPCServers.Balancer = balancer
+	}
+
+	defer c.RemoteSettings.Unlock()
+	c.RemoteSettings.Lock()
+	c.RemoteSettings.RawSettings = payloadKvs
+
+	if port, ok := payloadKvs["port"]; ok {
+		c.RemoteSettings.ServerPort = cast.ToInt(port)
+	}
+
+	if staticRanges, ok := payloadKvs["static_ranges"]; ok {
+		for _, str := range strings.Split(staticRanges, ";") {
+			if len(str) == 4 {
+				c.RemoteSettings.StaticRanges[str] = 1
+			}
+		}
 	}
 
 	return resp, nil

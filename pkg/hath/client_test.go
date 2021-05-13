@@ -61,6 +61,12 @@ func TestClient_FetchRemoteSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%#v", resp)
+
+	resp, err = c.FetchRemoteSettings(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%#v", resp)
 }
 
 func TestClient_GetRawPKCS12(t *testing.T) {

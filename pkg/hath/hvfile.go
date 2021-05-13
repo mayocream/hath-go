@@ -17,6 +17,8 @@ type HVFile struct {
 	Size int    `json:"size"`
 	Xres int    `json:"xres"`
 	Yres int    `json:"yres"`
+
+	Data []byte `json:"-"`
 }
 
 // NewHVFileFromFileID ...
@@ -34,6 +36,23 @@ func NewHVFileFromFileID(fileID string) (*HVFile, error) {
 	}, nil
 }
 
-func (f *HVFile) String() string {
+// FileID main key
+func (f *HVFile) FileID() string {
 	return fmt.Sprintf("%s-%v-%v-%v-%s", f.Hash, f.Size, f.Xres, f.Yres, f.Type)
+}
+
+// MIMEType MIME Type
+func (f *HVFile) MIMEType() string {
+	switch f.Type {
+	case "jpg":
+		return ContentTypeJPG
+	case "png":
+		return ContentTypePNG
+	case "gif":
+		return ContentTypeWEBM
+	case "wbm":
+		return ContentTypeWEBM
+	default:
+		return ContentTypeOctet
+	}
 }
