@@ -29,8 +29,8 @@ import (
 
 // Settings stands for client side config.
 type Settings struct {
-	ClientID  int    `yaml:"clien-id" mapstructure:"clien-id"`
-	ClientKey string `yaml:"client-key" mapstructure:"client-key"`
+	ClientID  int    `mapstructure:"client_id"`
+	ClientKey string `mapstructure:"client_key"`
 }
 
 // RemoteSettings config from remote server, overwrite local config.
@@ -419,4 +419,20 @@ func (c *Client) GetTLSCertificate() (*tls.Certificate, error) {
 	}
 
 	return &tlsCert, nil
+}
+
+// GetStaticRangeFetchURL ...
+func (c *Client) GetStaticRangeFetchURL(fileIndex, xres, fileID string) ([]string, error) {
+	resp, err := c.RPCRequest(ActionStaticRangeFetch, fmt.Sprintf("%s;%s;%s", fileIndex, xres, fileID))
+	if err != nil {
+		return nil, err
+	}
+
+	vurls := resp.Payload.URLs()
+	urls := make([]string, 0, len(vurls))
+	for _, u := range vurls {
+		urls = append(urls, u.String())
+	}	
+
+	return urls, err
 }

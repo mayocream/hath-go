@@ -1,6 +1,7 @@
 package hath
 
 import (
+	"crypto/tls"
 	"fmt"
 	"math"
 	"math/rand"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/gorilla/mux"
 	"github.com/mayocream/hath-go/pkg/hath/util"
 	"github.com/spf13/cast"
 	"go.uber.org/zap"
@@ -22,6 +22,12 @@ import (
 
 func init() {
 	rand.Seed(time.Now().Unix())
+}
+
+// Config ...
+type Config struct {
+	Settings    `mapstructure:",squash"`
+	StorageConf `mapstructure:",squash"`
 }
 
 // Server p2p server
@@ -33,8 +39,23 @@ type Server struct {
 }
 
 // NewServer ...
-func NewServer() (*Server, error) {
-	return &Server{}, nil
+func NewServer(config Config) (*Server, error) {
+	hc, err := NewClient(config.Settings)
+	if err != nil {
+		return nil, err
+	}
+	stor, err := NewStorage(config.StorageConf)
+	if err != nil {
+		return nil, err
+	}
+	dl := NewDownloader()
+	logger := zap.S().Named("hath")
+	return &Server{
+		dl:     dl,
+		hc:     hc,
+		stor:   stor,
+		logger: logger,
+	}, nil
 }
 
 // ParseRPCRequest only GET/HEAD methods avaliable on rpc call,
@@ -76,20 +97,43 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 	fileIndex := cast.ToInt(add["fileindex"])
 	xres := add["xres"]
 
+	// 403 Forbidden
 	if keystampRejected {
 		return nil, NewHTTPErr(http.StatusForbidden, errors.New("keystamp rejected"))
 	}
 
+	// check params
 	if fileIndex == 0 || xres == "" {
 		return nil, NewHTTPErr(http.StatusNotFound, errors.New("Invalid or missing arguments"))
 	}
 
 	hv, err := s.stor.GetHVFile(hvFile)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
+		// file not exsit on local disk
+		var validStaticRange bool
+		s.hc.RemoteSettings.RLock()
+		_, validStaticRange = s.hc.RemoteSettings.StaticRanges[fileID]
+		s.hc.RemoteSettings.RUnlock()
+		if errors.Is(err, ErrNotFound) && validStaticRange {
+			// download it then return
+			urls, err := s.hc.GetStaticRangeFetchURL(cast.ToString(fileIndex), xres, fileID)
+			if err != nil {
+				s.logger.With("fileID", fileID).Errorf("Fetch static range url: %s", err)
+				return nil, NewHTTPErr(http.StatusNotFound, err)
+			}
+			if len(urls) == 0 {
+				return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
+			}
+			// proxy download
+			data, err := s.dl.MultipleSourcesDownload(urls, hvFile)
+			if err != nil {
+				s.logger.With("fileID", fileID).Errorf("Proxy download failed: %s", err)
+				return nil, NewHTTPErr(http.StatusNotFound, err)
+			}
+			hvFile.Data = data
+			return hvFile, nil
 		}
-		// TODO proxy download
+		return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
 	}
 	return hv, nil
 }
@@ -103,15 +147,12 @@ func (s *Server) HandleTest(testSize, testTime int, testKey string) {
 // HandleHathCmd ...
 // TODO translate into general struct, to support Fiber web framework.
 //	form: /servercmd/$command/$additional/$time/$key
-func (s *Server) HandleHathCmd(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	cmd := vars["cmd"]
-	add := vars["add"]
-	srvTime := cast.ToInt(vars["time"])
-	key := vars["key"]
+func (s *Server) HandleHathCmd(serverIP, cmd, add, serverTime, key string) ([]byte, error) {
+	vars := fmt.Sprintf("ip: %s, cmd: %s, add: %s, time: %s, key: %s", serverIP, cmd, add, serverTime, key)
 
+	srvTime := cast.ToInt(serverTime)
 	// only allow API Server rquests
-	ip := net.ParseIP(r.RemoteAddr)
+	ip := net.ParseIP(serverIP)
 
 	s.logger.With("params", vars, "ip", ip).Info("ServerCmd, received event.")
 
@@ -128,33 +169,32 @@ func (s *Server) HandleHathCmd(w http.ResponseWriter, r *http.Request) {
 	exptKey := util.SHA1(fmt.Sprintf("hentai@home-servercmd-%s-%s-%s-%s-%s",
 		cmd, add, cast.ToString(s.hc.ClientID), cast.ToString(srvTime), s.hc.ClientKey))
 	if (srvTime-util.SystemTime()) > MaxKeyTimeDrift || exptKey != key {
-		w.WriteHeader(http.StatusForbidden)
 		s.logger.With("params", vars, "ip", ip).Warn("ServerCmd, invalid request.")
-		return
+		return nil, NewHTTPErr(http.StatusForbidden, errors.New("invalid ke"))
 	}
 
-	if err := s.execAPICmd(w, cmd, add); err != nil {
+	result, err := s.execAPICmd(cmd, add)
+	if err != nil {
 		s.logger.With("params", vars, "ip", ip).Errorf("ServerCmd, exec: %s", err)
-		return
+		return nil, NewHTTPErr(http.StatusBadRequest, err)
 	}
+
+	return result, nil
 }
 
-func (s *Server) execAPICmd(w http.ResponseWriter, cmd string, add string) error {
+func (s *Server) execAPICmd(cmd string, add string) ([]byte, error) {
 	addParams := util.ParseAddition(add)
-	// although we use iso-8859-1 encoding, generaly we don't use unicode strings,
-	//	it's fine just print utf8 encoding.
-	w.Header().Set("Content-Type:", "text/html; charset=ISO-8859-1")
 
 	switch cmd {
 	// health check
 	case "still_alive":
-		w.Write([]byte("I feel FANTASTIC and I'm still alive"))
+		return []byte("I feel FANTASTIC and I'm still alive"), nil
 	case "threaded_proxy_test":
 		result, err := s.execDownloadTest(addParams)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		w.Write(result)
+		return result, nil
 	case "speed_test":
 		// TODO return random bytes
 	case "refresh_settings":
@@ -164,15 +204,14 @@ func (s *Server) execAPICmd(w http.ResponseWriter, cmd string, add string) error
 	case "refresh_certs":
 		tlsCert, err := s.hc.GetTLSCertificate()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		s.hc.Certificate.StoreCertificate(tlsCert)
 	default:
-		w.Write([]byte("INVALID_COMMAND"))
-		return errors.New("invalid command")
+		return []byte("INVALID_COMMAND"), errors.New("invalid command")
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (s *Server) execDownloadTest(add map[string]string) ([]byte, error) {
@@ -214,4 +253,24 @@ func (s *Server) execDownloadTest(add map[string]string) ([]byte, error) {
 	result := fmt.Sprintf("OK:%v-%v", totalSuccess, totalTimeMs)
 
 	return []byte(result), nil
+}
+
+// TLSConfig ...
+func (s *Server) TLSConfig() (*tls.Config, error) {
+	cert, err := s.hc.GetTLSCertificate()
+	if err != nil {
+		return nil, err
+	}
+	s.hc.Certificate.StoreCertificate(cert)
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return s.hc.Certificate.GetCertificate()
+		},
+	}, nil
+}
+
+// Addr ...
+func (s *Server) Addr() int {
+	return s.hc.RemoteSettings.ServerPort
 }

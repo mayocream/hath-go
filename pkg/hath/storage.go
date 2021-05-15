@@ -11,7 +11,7 @@ var ErrNotFound = leveldb.ErrNotFound
 
 // StorageConf ...
 type StorageConf struct {
-	DBFile string `json:"db_file" yaml:"db_file"`
+	DBFile string `mapstructure:"db_file"`
 }
 
 // Storage ...
@@ -20,7 +20,7 @@ type Storage struct {
 }
 
 // NewStorage ...
-func NewStorage(conf *StorageConf) (*Storage, error) {
+func NewStorage(conf StorageConf) (*Storage, error) {
 	db, err := leveldb.OpenFile(conf.DBFile, nil)
 	if err != nil {
 		return nil, err

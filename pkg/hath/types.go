@@ -14,7 +14,7 @@ const (
 	ClientRPCFile       = "15/rpc"
 	ClientLoginFilename = "CLIENT_LOGIN_FILENAME"
 
-	ContentTypeDefault = "text/html; charset=iso-8859-1"
+	ContentTypeDefault = "text/html; charset=ISO-8859-1"
 	ContentTypeOctet   = "application/octet-stream"
 	ContentTypeJPG     = "image/jpeg"
 	ContentTypePNG     = "image/png"
