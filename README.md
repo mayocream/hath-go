@@ -4,7 +4,7 @@
 
 (Unofficial) Go port of H@H p2p server.
 
-## Compare to official JAVA program
+## Compare to official Java program
 
 **Advantages**:
 - Easy to run (No JIT environment and external steps)
