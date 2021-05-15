@@ -21,6 +21,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 	"github.com/spf13/cast"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/pkcs12"
 
 	"github.com/mayocream/hath-go/pkg/hath/util"
@@ -29,7 +30,7 @@ import (
 
 // Settings stands for client side config.
 type Settings struct {
-	ClientID  int    `mapstructure:"client_id"`
+	ClientID  string `mapstructure:"client_id"`
 	ClientKey string `mapstructure:"client_key"`
 }
 
@@ -131,11 +132,11 @@ type Client struct {
 
 // NewClient creates new client.
 func NewClient(config Settings) (*Client, error) {
-	if config.ClientID == 0 || config.ClientKey == "" {
+	if config.ClientID == "" || config.ClientKey == "" {
 		return nil, errors.New("id/key missing")
 	}
 	// client id must be integer more than 0
-	if config.ClientID <= 0 {
+	if len(config.ClientID) == 0 {
 		return nil, errors.New("invalid client id")
 	}
 
@@ -146,15 +147,17 @@ func NewClient(config Settings) (*Client, error) {
 		Settings: config,
 		http: resty.NewWithClient(&http.Client{
 			Transport: http.DefaultTransport,
-			Timeout:   5 * time.Second,
+			Timeout:   20 * time.Second,
 		}).SetHeader("Connection", "Close").
 			SetHeader("User-Agent", "Hentai@Home "+ClientVersion).
-			SetRetryCount(3).
+			// SetRetryCount(3).
 			SetDebug(cast.ToBool(os.Getenv("HATH_HTTP_DEBUG"))),
 		Certificate: new(Certificate),
 	}
 	// Init
+	zap.S().Info("sync server time delta")
 	c.SyncTimeDelta()
+	zap.S().Info("fetch remote settings")
 	c.FetchRemoteSettings(false) // not running
 	return c, nil
 }
@@ -164,6 +167,14 @@ var (
 	ErrRespIsNull = errors.New("obb response")
 	// ErrTemporarilyUnavailable another server error
 	ErrTemporarilyUnavailable = errors.New("temporarily unavailable")
+	// ErrConnectTestFailed The server failed to verify that this client is online and available from the Internet.
+	ErrConnectTestFailed = errors.New("failed external connection test")
+	// ErrIPAddressInUse The server detected that another client was already connected from this computer or local network.
+	// 	You can only have one client running per public IP address.
+	ErrIPAddressInUse = errors.New("another client was already connected")
+	// ErrClientIDInUse The server detected that another client is already using this client ident.
+	//	If you want to run more than one client, you have to apply for additional idents.
+	ErrClientIDInUse = errors.New("another client is already using this client ident")
 )
 
 // RPCRawRequest will retry 3 times when failed, then downgrade rpc severs
@@ -216,6 +227,18 @@ func (c *Client) RPCRawRequest(uri *url.URL) (*RPCResponse, error) {
 		return nil, ErrTemporarilyUnavailable
 	}
 
+	if strings.HasPrefix(status, "FAIL_CONNECT_TEST") {
+		return nil, ErrConnectTestFailed
+	}
+
+	if strings.HasPrefix(status, "FAIL_OTHER_CLIENT_CONNECTED") {
+		return nil, ErrIPAddressInUse
+	}
+
+	if strings.HasPrefix(status, "FAIL_CID_IN_USE") {
+		return nil, ErrIPAddressInUse
+	}
+
 	return nil, fmt.Errorf("unknown: %s", status)
 }
 
@@ -251,12 +274,12 @@ func (c *Client) RPCRequest(act Action, add string) (*RPCResponse, error) {
 func (c *Client) getURLQuery(act Action, add string) url.Values {
 	correctedTime := c.correctedTime()
 	actKey := util.SHA1(fmt.Sprintf("hentai@home-%s-%s-%s-%s-%s",
-		string(act), add, strconv.Itoa(c.ClientID), strconv.Itoa(correctedTime), c.ClientKey))
+		string(act), add, c.ClientID, strconv.Itoa(correctedTime), c.ClientKey))
 
 	q := make(url.Values, 6)
 	q.Add("clientbuild", strconv.Itoa(ClientBuild))
 	q.Add("act", string(act))
-	q.Add("cid", strconv.Itoa(c.ClientID))
+	q.Add("cid", c.ClientID)
 	q.Add("acttime", strconv.Itoa(correctedTime))
 	q.Add("actkey", actKey)
 	return q
@@ -302,6 +325,9 @@ func (c *Client) SyncTimeDelta() error {
 func (c *Client) FetchRemoteSettings(isRunning bool) (*RPCResponse, error) {
 	// action can be different from server side logic,
 	//	though it returns same response.
+	// RAW: this MUST NOT be called after the client has started up,
+	//	as it will clear out and reset the client on the server,
+	//	leaving the client in a limbo until restart
 	act := ActionClientLogin
 	if isRunning {
 		act = ActionClientSettings
@@ -432,7 +458,27 @@ func (c *Client) GetStaticRangeFetchURL(fileIndex, xres, fileID string) ([]strin
 	urls := make([]string, 0, len(vurls))
 	for _, u := range vurls {
 		urls = append(urls, u.String())
-	}	
+	}
 
 	return urls, err
+}
+
+// NotifyStarted notify h@h server we are ready to receive requests
+func (c *Client) NotifyStarted() error {
+	_, err := c.RPCRequest(ActionClientStart, "")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// NotifyShutdown notify h@h server we are shutdown
+func (c *Client) NotifyShutdown() error {
+	_, err := c.RPCRequest(ActionClientStop, "")
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

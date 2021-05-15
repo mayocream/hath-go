@@ -32,10 +32,10 @@ type Config struct {
 
 // Server p2p server
 type Server struct {
-	hc     *Client
-	dl     *Downloader
+	HC     *Client
+	DL     *Downloader
 	logger *zap.SugaredLogger
-	stor   *Storage
+	Stor   *Storage
 }
 
 // NewServer ...
@@ -51,9 +51,9 @@ func NewServer(config Config) (*Server, error) {
 	dl := NewDownloader()
 	logger := zap.S().Named("hath")
 	return &Server{
-		dl:     dl,
-		hc:     hc,
-		stor:   stor,
+		DL:     dl,
+		HC:     hc,
+		Stor:   stor,
 		logger: logger,
 	}, nil
 }
@@ -87,7 +87,7 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 		parts := strings.Split(keystamp, "-")
 		if len(parts) == 2 {
 			keystampTime := cast.ToInt(parts[0])
-			k := util.SHA1(fmt.Sprintf("%s-%s-%s-hotlinkthis", cast.ToString(keystampTime), fileID, s.hc.ClientKey))
+			k := util.SHA1(fmt.Sprintf("%s-%s-%s-hotlinkthis", cast.ToString(keystampTime), fileID, s.HC.ClientKey))
 			if math.Abs(float64(util.SystemTime()-keystampTime)) < 900 && strings.ToLower(parts[1]) == k[:10] {
 				keystampRejected = false
 			}
@@ -107,16 +107,16 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 		return nil, NewHTTPErr(http.StatusNotFound, errors.New("Invalid or missing arguments"))
 	}
 
-	hv, err := s.stor.GetHVFile(hvFile)
+	hv, err := s.Stor.GetHVFile(hvFile)
 	if err != nil {
 		// file not exsit on local disk
 		var validStaticRange bool
-		s.hc.RemoteSettings.RLock()
-		_, validStaticRange = s.hc.RemoteSettings.StaticRanges[fileID]
-		s.hc.RemoteSettings.RUnlock()
+		s.HC.RemoteSettings.RLock()
+		_, validStaticRange = s.HC.RemoteSettings.StaticRanges[fileID]
+		s.HC.RemoteSettings.RUnlock()
 		if errors.Is(err, ErrNotFound) && validStaticRange {
 			// download it then return
-			urls, err := s.hc.GetStaticRangeFetchURL(cast.ToString(fileIndex), xres, fileID)
+			urls, err := s.HC.GetStaticRangeFetchURL(cast.ToString(fileIndex), xres, fileID)
 			if err != nil {
 				s.logger.With("fileID", fileID).Errorf("Fetch static range url: %s", err)
 				return nil, NewHTTPErr(http.StatusNotFound, err)
@@ -125,7 +125,7 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 				return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
 			}
 			// proxy download
-			data, err := s.dl.MultipleSourcesDownload(urls, hvFile)
+			data, err := s.DL.MultipleSourcesDownload(urls, hvFile)
 			if err != nil {
 				s.logger.With("fileID", fileID).Errorf("Proxy download failed: %s", err)
 				return nil, NewHTTPErr(http.StatusNotFound, err)
@@ -140,8 +140,17 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 
 // HandleTest ...
 // 	form: /t/$testsize/$testtime/$testkey
-func (s *Server) HandleTest(testSize, testTime int, testKey string) {
-	// TODO return random bytes
+func (s *Server) HandleTest(sizeStr, timeStr, key string) ([]byte, error) {
+	size := cast.ToInt(sizeStr)
+	// srvTime := cast.ToInt(timeStr)
+	// TODO auth
+	buf := make([]byte, size)
+    _, err := rand.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
 }
 
 // HandleHathCmd ...
@@ -157,17 +166,17 @@ func (s *Server) HandleHathCmd(serverIP, cmd, add, serverTime, key string) ([]by
 	s.logger.With("params", vars, "ip", ip).Info("ServerCmd, received event.")
 
 	// We might not check source ip for it alreay contains hash digital sign.
-	// s.hc.RPCServers.RLock()
-	// if _, ok := s.hc.RPCServers.Hosts[ip.String()]; !ok {
-	// 	s.hc.RPCServers.RUnlock()
+	// s.HC.RPCServers.RLock()
+	// if _, ok := s.HC.RPCServers.Hosts[ip.String()]; !ok {
+	// 	s.HC.RPCServers.RUnlock()
 	// 	w.WriteHeader(http.StatusForbidden)
 	// 	s.logger.With("params", vars, "ip", ip).Warn("ServerCmd, unknown IP.")
 	// 	return
 	// }
-	// s.hc.RPCServers.RUnlock()
+	// s.HC.RPCServers.RUnlock()
 
 	exptKey := util.SHA1(fmt.Sprintf("hentai@home-servercmd-%s-%s-%s-%s-%s",
-		cmd, add, cast.ToString(s.hc.ClientID), cast.ToString(srvTime), s.hc.ClientKey))
+		cmd, add, cast.ToString(s.HC.ClientID), cast.ToString(srvTime), s.HC.ClientKey))
 	if (srvTime-util.SystemTime()) > MaxKeyTimeDrift || exptKey != key {
 		s.logger.With("params", vars, "ip", ip).Warn("ServerCmd, invalid request.")
 		return nil, NewHTTPErr(http.StatusForbidden, errors.New("invalid ke"))
@@ -196,17 +205,27 @@ func (s *Server) execAPICmd(cmd string, add string) ([]byte, error) {
 		}
 		return result, nil
 	case "speed_test":
-		// TODO return random bytes
-	case "refresh_settings":
-		s.hc.FetchRemoteSettings(true)
-	case "start_downloader":
-		// ignore it, we will init Download at started.
-	case "refresh_certs":
-		tlsCert, err := s.hc.GetTLSCertificate()
+		// return random bytes
+		size := cast.ToInt(addParams["testsize"])
+		if size == 0 {
+			size = 1000000
+		}
+		buf := make([]byte, size)
+		_, err := rand.Read(buf)
 		if err != nil {
 			return nil, err
 		}
-		s.hc.Certificate.StoreCertificate(tlsCert)
+		return buf, nil
+	case "refresh_settings":
+		s.HC.FetchRemoteSettings(true)
+	case "start_downloader":
+		// ignore it, we will init Download at started.
+	case "refresh_certs":
+		tlsCert, err := s.HC.GetTLSCertificate()
+		if err != nil {
+			return nil, err
+		}
+		s.HC.Certificate.StoreCertificate(tlsCert)
 	default:
 		return []byte("INVALID_COMMAND"), errors.New("invalid command")
 	}
@@ -239,7 +258,7 @@ func (s *Server) execDownloadTest(add map[string]string) ([]byte, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			duration, err := s.dl.DiscardDownload(fileURL.String())
+			duration, err := s.DL.DiscardDownload(fileURL.String())
 			if err != nil {
 				atomic.AddInt64(&totalSuccess, -1)
 				return
@@ -257,20 +276,21 @@ func (s *Server) execDownloadTest(add map[string]string) ([]byte, error) {
 
 // TLSConfig ...
 func (s *Server) TLSConfig() (*tls.Config, error) {
-	cert, err := s.hc.GetTLSCertificate()
+	s.logger.Info("init server tls config")
+	cert, err := s.HC.GetTLSCertificate()
 	if err != nil {
 		return nil, err
 	}
-	s.hc.Certificate.StoreCertificate(cert)
+	s.HC.Certificate.StoreCertificate(cert)
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			return s.hc.Certificate.GetCertificate()
+			return s.HC.Certificate.GetCertificate()
 		},
 	}, nil
 }
 
 // Addr ...
 func (s *Server) Addr() int {
-	return s.hc.RemoteSettings.ServerPort
+	return s.HC.RemoteSettings.ServerPort
 }

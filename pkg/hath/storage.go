@@ -2,6 +2,7 @@ package hath
 
 import (
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 
 	"github.com/syndtr/goleveldb/leveldb"
 )
@@ -21,6 +22,7 @@ type Storage struct {
 
 // NewStorage ...
 func NewStorage(conf StorageConf) (*Storage, error) {
+	zap.S().Infof("open leveldb at: %s", conf.DBFile)
 	db, err := leveldb.OpenFile(conf.DBFile, nil)
 	if err != nil {
 		return nil, err

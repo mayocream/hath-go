@@ -1,3 +1,6 @@
 client_id: ""
 client_key: ""
-db_file: ""
+db_file: "~/.hath/hv.ldb"
+
+debug: false
+log_level: warn

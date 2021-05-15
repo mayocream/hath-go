@@ -2,8 +2,8 @@ package main
 
 import (
 	_ "embed"
-	"errors"
 	"fmt"
+	"github.com/pkg/errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +41,7 @@ func parseCfg(file string) (*server.Config, error) {
 		}
 	}
 
+	viper.SetEnvPrefix("hath")
 	viper.EnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	viper.AutomaticEnv()
 
@@ -53,6 +54,15 @@ func parseCfg(file string) (*server.Config, error) {
 	conf := new(server.Config)
 	if err := viper.Unmarshal(conf); err != nil {
 		return nil, err
+	}
+
+	fmt.Printf("Start with ClientID: %s, DB: %s \n", conf.ClientID, conf.DBFile)
+	if conf.ClientID == "" || conf.ClientKey == "" {
+		return nil, errors.New("missing id/key")
+	}
+
+	if conf.DBFile == "" {
+		return nil, errors.New("empty db file path")
 	}
 
 	return conf, nil

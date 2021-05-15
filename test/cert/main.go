@@ -22,7 +22,7 @@ func init() {
 func main() {
 	clientKey := viper.GetString("HATH_CLIENT_KEY")
 	hc, err := hath.NewClient(hath.Settings{
-		ClientID:  viper.GetInt("HATH_CLIENT_ID"),
+		ClientID:  viper.GetString("HATH_CLIENT_ID"),
 		ClientKey: clientKey,
 	})
 	if err != nil {

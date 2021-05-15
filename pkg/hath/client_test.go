@@ -6,7 +6,6 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
-	"github.com/spf13/cast"
 )
 
 func testClient() *Client {
@@ -14,7 +13,7 @@ func testClient() *Client {
 		panic(err)
 	}
 	c, err := NewClient(Settings{
-		ClientID:  cast.ToInt(os.Getenv("HATH_CLIENT_ID")),
+		ClientID:  os.Getenv("HATH_CLIENT_ID"),
 		ClientKey: os.Getenv("HATH_CLIENT_KEY"),
 	})
 	if err != nil {
@@ -25,7 +24,7 @@ func testClient() *Client {
 
 func TestClient_GetRPCURL(t *testing.T) {
 	c, err := NewClient(Settings{
-		ClientID:  1,
+		ClientID:  "1",
 		ClientKey: "12345678901234567890",
 	})
 	if err != nil {
@@ -38,7 +37,7 @@ func TestClient_GetRPCURL(t *testing.T) {
 
 func TestClient_RPCRawRequest(t *testing.T) {
 	c, err := NewClient(Settings{
-		ClientID:  1,
+		ClientID:  "1",
 		ClientKey: "12345678901234567890",
 	})
 	if err != nil {

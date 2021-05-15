@@ -1,9 +1,16 @@
 package server
 
-import "github.com/mayocream/hath-go/pkg/hath"
+import (
+	"github.com/mayocream/hath-go/pkg/hath"
+)
 
 // Config global config
-type Config hath.Config
+type Config struct {
+	hath.Config `mapstructure:",squash"`
+
+	Debug    bool   `mapstructure:"debug"`
+	LogLevel string `mapstructure:"log_level"`
+}
 
 // Hath ...
 type Hath struct {
@@ -12,7 +19,8 @@ type Hath struct {
 
 // NewHath ...
 func NewHath(config Config) (*Hath, error) {
-	s, err := hath.NewServer(hath.Config(config))
+	initLogger(config)
+	s, err := hath.NewServer(config.Config)
 	if err != nil {
 		return nil, err
 	}
