@@ -1,0 +1,12 @@
+bin/
+.git/
+
+test/
+tmp/
+
+.example.env
+.gitignore
+
+Makefile
+
+README.md

@@ -22,3 +22,6 @@ race:
 
 clean:
 	rm -rf ./bin
+
+docker:
+	sudo docker build -t hath:dev .
