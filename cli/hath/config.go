@@ -62,7 +62,8 @@ func parseCfg(file string) (*server.Config, error) {
 	}
 
 	if conf.DBFile == "" {
-		return nil, errors.New("empty db file path")
+		conf.DBFile = filepath.Join(baseDir, ".hath", "hv.ldb")
+		fmt.Println("Using default db data path: ", conf.DBFile)
 	}
 
 	return conf, nil
