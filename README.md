@@ -1,8 +1,8 @@
 # Hath-Go
 
-> Hentai@Home (H@H) is an open-source Peer-2-Peer gallery distribution system which reduces the load on the E-Hentai Galleries.
+> Hentai@Home (H@H) is an open-source Peer-2-Peer gallery distribution system which reduces the load on the E-Hentai Galleries. [EHWiki](https://ehwiki.org/wiki/Hentai@Home)
 
-(unofficial) Go port of H@H p2p server.
+(Unofficial) Go port of H@H p2p server.
 
 ## Compare to official JAVA program
 
@@ -11,7 +11,7 @@
 - Higher performance (based on [fasthttp](https://github.com/valyala/fasthttp))
 
 **Disadvantages**:
-- Unstable (you might loss trust for unexpected shutdown)
+- Unstable (you might loss trust points for unexpected shutdown)
 - No GUI provided
 
 ## Install
@@ -52,8 +52,8 @@ log_level: debug
 
 ## Todolist
 
-- [] Goreleaser
-- [] Fully test
-- [] Documentation
-- [] Support HTTP/3 (QUIC)
-- [] GUI
+- [ ] Goreleaser
+- [ ] Fully test
+- [ ] Documentation
+- [ ] Support HTTP/3 (QUIC)
+- [ ] GUI
