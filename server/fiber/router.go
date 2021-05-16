@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -36,8 +37,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	srv.All("/t/*", s.testHandler)
 
 	if viper.GetBool("debug") {
-		zap.S().Info("fiber server record logs")
-		srv.Use(logger.New())
+		zap.S().Info("Fiber server now record http request to logs")
+		logConf := logger.ConfigDefault
+		logConf.Output = os.Stdout
+		srv.Use(logger.New(logConf))
 	}
 
 	tlsConfig, err := s.hath.TLSConfig()
@@ -45,15 +48,19 @@ func (s *Server) Serve(ctx context.Context) error {
 		return err
 	}
 
+	zap.S().Info("HTTP Server will serve at: %v", s.hath.Addr())
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%v", s.hath.Addr()))
 	if err != nil {
 		return err
 	}
 	ln = tls.NewListener(ln, tlsConfig)
+	zap.S().Info("HTTPS Server enabled.")
 
 	go func() {
 		<-ctx.Done()
+		zap.S().Info("HTTP server graceful shutdown...")
 		srv.Shutdown()
+		zap.S().Info("Finished HTTP server graceful shutdown.")
 	}()
 
 	return srv.Listener(ln)

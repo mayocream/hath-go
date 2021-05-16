@@ -75,10 +75,12 @@ func (s *Server) ParseRPCRequest(req *http.Request) (interface{}, error) {
 // HandleHV ...
 //	form: /h/$fileid/$additional/$filename
 func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFile, error) {
+	vars := fmt.Sprintf("fileID: %s, add: %s, fileName: %s", fileID, addStr, fileName)
+
 	add := util.ParseAddition(addStr)
 	hvFile, err := NewHVFileFromFileID(fileID)
 	if err != nil {
-		s.logger.With("fileID", fileID).Warnf("HVFile, %s", err)
+		s.logger.With("fileID", fileID).Warnf("HV, failed to parse FileID, %s", err)
 		return nil, err
 	}
 
@@ -99,11 +101,13 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 
 	// 403 Forbidden
 	if keystampRejected {
+		s.logger.With("vars", vars).Warn("HV, keystampRejected, failed to auth request from server.")
 		return nil, NewHTTPErr(http.StatusForbidden, errors.New("keystamp rejected"))
 	}
 
 	// check params
 	if fileIndex == 0 || xres == "" {
+		s.logger.With("vars", vars).Warn("HV, missing params.")
 		return nil, NewHTTPErr(http.StatusNotFound, errors.New("Invalid or missing arguments"))
 	}
 
@@ -115,38 +119,48 @@ func (s *Server) HandleHV(fileID string, addStr string, fileName string) (*HVFil
 		_, validStaticRange = s.HC.RemoteSettings.StaticRanges[fileID]
 		s.HC.RemoteSettings.RUnlock()
 		if errors.Is(err, ErrNotFound) && validStaticRange {
+			s.logger.With("vars", vars).Warn("HV, file not exist on local, but in static range, it will be download then return to user agent.")
 			// download it then return
 			urls, err := s.HC.GetStaticRangeFetchURL(cast.ToString(fileIndex), xres, fileID)
 			if err != nil {
-				s.logger.With("fileID", fileID).Errorf("Fetch static range url: %s", err)
+				s.logger.With("fileID", fileID).Errorf("HV, fetch static range url: %s", err)
 				return nil, NewHTTPErr(http.StatusNotFound, err)
 			}
 			if len(urls) == 0 {
+				s.logger.With("fileID", fileID).Error("HV, fetch static range url: 0 items.")
 				return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
 			}
 			// proxy download
 			data, err := s.DL.MultipleSourcesDownload(urls, hvFile)
 			if err != nil {
-				s.logger.With("fileID", fileID).Errorf("Proxy download failed: %s", err)
+				s.logger.With("fileID", fileID).Errorf("HV, proxy download failed: %s", err)
 				return nil, NewHTTPErr(http.StatusNotFound, err)
 			}
 			hvFile.Data = data
+			s.logger.With("vars", vars).Info("HV, successful download file data: %v bytes.", len(data))
 			return hvFile, nil
 		}
+		s.logger.With("vars", vars).Warn("HV, file not exist on local, and it's not in static range, 404 code.")
 		return nil, NewHTTPErr(http.StatusNotFound, ErrNotFound)
 	}
+	s.logger.With("vars", vars).Info("HV, hit local hv file data.")
 	return hv, nil
 }
 
 // HandleTest ...
 // 	form: /t/$testsize/$testtime/$testkey
 func (s *Server) HandleTest(sizeStr, timeStr, key string) ([]byte, error) {
+	vars := fmt.Sprintf("size: %s, time: %s, key: %s", sizeStr, timeStr, key)
+
+	s.logger.With("params", vars).Infof("TestCmd, %s random bytes will be generated.", sizeStr)
+
 	size := cast.ToInt(sizeStr)
 	// srvTime := cast.ToInt(timeStr)
 	// TODO auth
 	buf := make([]byte, size)
-    _, err := rand.Read(buf)
+	_, err := rand.Read(buf)
 	if err != nil {
+		s.logger.With("params", vars).Errorf("TestCmd, failed to generate bytes: %s", err)
 		return nil, err
 	}
 

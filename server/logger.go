@@ -10,7 +10,9 @@ import (
 func initLogger(config Config) {
 	conf := zap.NewProductionConfig()
 	conf.EncoderConfig = zap.NewDevelopmentEncoderConfig()
+	conf.DisableCaller = true
 	if config.Debug {
+		conf.DisableCaller = false
 		conf.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	}
 	conf.Encoding = "console"

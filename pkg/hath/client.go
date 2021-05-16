@@ -147,10 +147,11 @@ func NewClient(config Settings) (*Client, error) {
 		Settings: config,
 		http: resty.NewWithClient(&http.Client{
 			Transport: http.DefaultTransport,
-			Timeout:   20 * time.Second,
+			Timeout:   60 * time.Second,
 		}).SetHeader("Connection", "Close").
 			SetHeader("User-Agent", "Hentai@Home "+ClientVersion).
 			// SetRetryCount(3).
+			EnableTrace().
 			SetDebug(cast.ToBool(os.Getenv("HATH_HTTP_DEBUG"))),
 		Certificate: new(Certificate),
 	}
@@ -184,16 +185,30 @@ func (c *Client) RPCRawRequest(uri *url.URL) (*RPCResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	ti := resp.Request.TraceInfo()
+	log := zap.S().Named("Hath-Client").With("url", uri.String(),
+		"totalTime", ti.TotalTime.String(),
+		"connTime", ti.ConnTime.String(),
+		"responseTime", (ti.ServerTime + ti.ResponseTime).String())
 	if len(resp.Body()) == 0 {
+		log.Warnf("HathRPC, http code: %v, empty body.", resp.StatusCode())
 		return nil, ErrRespIsNull
 	}
 
 	split := strings.Split(string(resp.Body()), "\n")
 	if len(split) < 1 {
+		log.Warnf("HathRPC, http code: %v, missing rpc status.", resp.StatusCode())
 		return nil, ErrRespIsNull
 	}
 
 	status := split[0]
+
+	if resp.StatusCode() > 200 || status != "OK" {
+		log.Warnf("HathRPC, http code: %v, status: %s", resp.StatusCode(), status)
+	} else {
+		log.Infof("HathRPC, http code: %v, status: %s", resp.StatusCode(), status)
+	}
+
 	if status == "OK" {
 		// filter results
 		payload := make([]string, 0, len(split)-1)
